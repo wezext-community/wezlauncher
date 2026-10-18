@@ -30,7 +30,11 @@ jobs:
           $name = "wezlauncher-v$ver-x86_64-pc-windows-msvc"
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item "target/release/wezlauncher.exe" dist/
-          Compress-Archive -Path "dist/wezlauncher.exe" -DestinationPath "dist/$name.zip" -Force
+          # 用 tar(bsdtar) 打包，别用 Compress-Archive —— 后者产出的 zip
+          # bsdtar 有时读不了，而 wezext 的解压依赖 tar.exe
+          Push-Location dist
+          tar -a -c -f "$name.zip" "wezlauncher.exe"
+          Pop-Location
           $sha = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
           "$sha" | Set-Content "dist/$name.zip.sha256"
           "ver=$ver" >> $env:GITHUB_OUTPUT
