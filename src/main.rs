@@ -373,10 +373,89 @@ enum Page {
     Manage,
 }
 
+#[derive(Default)]
 struct Input {
-    buf: String,
+    /// 按 char 存，光标位置 pos 是 char 下标（0..=chars.len()）
+    chars: Vec<char>,
+    pos: usize,
     /// Some(idx) 表示在编辑已有条目，None 表示新增
     editing: Option<usize>,
+}
+
+impl Input {
+    fn new(text: &str, editing: Option<usize>) -> Self {
+        let chars: Vec<char> = text.chars().collect();
+        let pos = chars.len();
+        Self {
+            chars,
+            pos,
+            editing,
+        }
+    }
+
+    fn text(&self) -> String {
+        self.chars.iter().collect()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.chars.is_empty()
+    }
+
+    fn insert(&mut self, c: char) {
+        self.chars.insert(self.pos, c);
+        self.pos += 1;
+    }
+
+    fn backspace(&mut self) {
+        if self.pos > 0 {
+            self.pos -= 1;
+            self.chars.remove(self.pos);
+        }
+    }
+
+    fn delete(&mut self) {
+        if self.pos < self.chars.len() {
+            self.chars.remove(self.pos);
+        }
+    }
+
+    fn left(&mut self) {
+        self.pos = self.pos.saturating_sub(1);
+    }
+
+    fn right(&mut self) {
+        if self.pos < self.chars.len() {
+            self.pos += 1;
+        }
+    }
+
+    fn home(&mut self) {
+        self.pos = 0;
+    }
+
+    fn end(&mut self) {
+        self.pos = self.chars.len();
+    }
+
+    /// 删掉光标前的一个词（Ctrl+W）
+    fn delete_word_back(&mut self) {
+        while self.pos > 0 && self.chars[self.pos - 1].is_whitespace() {
+            self.backspace();
+        }
+        while self.pos > 0 && !self.chars[self.pos - 1].is_whitespace() {
+            self.backspace();
+        }
+    }
+
+    /// 拆成 (光标前, 光标处字符, 光标后)
+    fn split_at_cursor(&self) -> (String, Option<char>, String) {
+        let before: String = self.chars[..self.pos].iter().collect();
+        let at = self.chars.get(self.pos).copied();
+        let after: String = self.chars[(self.pos + 1).min(self.chars.len())..]
+            .iter()
+            .collect();
+        (before, at, after)
+    }
 }
 
 struct App {
@@ -402,6 +481,19 @@ impl App {
             Err(e) => (Vec::new(), format!("读取标签页失败: {e}")),
         };
         let entries = load_entries();
+        // 调试用：WEZLAUNCHER_INPUT="ssh a = b" 启动即进入输入模式
+        let input = std::env::var("WEZLAUNCHER_INPUT").ok().map(|t| {
+            let mut i = Input::new(&t, None);
+            // WEZLAUNCHER_INPUT_LEFT=N 把光标往左挪 N 格，方便截图验证
+            let n: usize = std::env::var("WEZLAUNCHER_INPUT_LEFT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            for _ in 0..n {
+                i.left();
+            }
+            i
+        });
         App {
             tabs,
             new_items: new_items(&entries),
@@ -410,7 +502,7 @@ impl App {
             sel_new: 0,
             sel_entry: 0,
             page: start_page,
-            input: None,
+            input,
             status,
             quit: false,
         }
@@ -436,7 +528,7 @@ impl App {
 
     fn commit_input(&mut self) {
         let Some(input) = self.input.take() else { return };
-        let text = input.buf.trim().to_string();
+        let text = input.text().trim().to_string();
         if text.is_empty() {
             self.status = "取消：内容为空".into();
             return;
@@ -519,18 +611,32 @@ fn run(terminal: &mut DefaultTerminal, start_page: Page) -> io::Result<()> {
             continue;
         }
 
-        // 输入模式优先
+        // 输入模式优先（支持左右键、Home/End、Delete、Ctrl+W 等）
         if let Some(input) = app.input.as_mut() {
+            use ratatui::crossterm::event::KeyModifiers as KM;
+            let ctrl = key.modifiers.contains(KM::CONTROL);
             match key.code {
                 KeyCode::Enter => app.commit_input(),
                 KeyCode::Esc => {
                     app.input = None;
                     app.status = "已取消输入".into();
                 }
-                KeyCode::Backspace => {
-                    input.buf.pop();
+                KeyCode::Left => input.left(),
+                KeyCode::Right => input.right(),
+                KeyCode::Home => input.home(),
+                KeyCode::End => input.end(),
+                KeyCode::Backspace => input.backspace(),
+                KeyCode::Delete => input.delete(),
+                KeyCode::Char('a') if ctrl => input.home(),
+                KeyCode::Char('e') if ctrl => input.end(),
+                KeyCode::Char('u') if ctrl => {
+                    input.home();
+                    while !input.is_empty() {
+                        input.delete();
+                    }
                 }
-                KeyCode::Char(c) => input.buf.push(c),
+                KeyCode::Char('w') if ctrl => input.delete_word_back(),
+                KeyCode::Char(c) if !ctrl => input.insert(c),
                 _ => {}
             }
             continue;
@@ -574,10 +680,7 @@ fn run(terminal: &mut DefaultTerminal, start_page: Page) -> io::Result<()> {
                 Page::Manage => app.sel_entry = app.sel_entry.saturating_sub(1),
             },
             KeyCode::Char('a') if app.page == Page::Manage => {
-                app.input = Some(Input {
-                    buf: String::new(),
-                    editing: None,
-                });
+                app.input = Some(Input::new("", None));
                 app.status = "新增：输入 `ssh 名字 = 参数` 后回车".into();
             }
             KeyCode::Char('d') if app.page == Page::Manage => {
@@ -587,10 +690,7 @@ fn run(terminal: &mut DefaultTerminal, start_page: Page) -> io::Result<()> {
             }
             KeyCode::Char('e') if app.page == Page::Manage => {
                 if let Some(e) = app.entries.get(app.sel_entry) {
-                    app.input = Some(Input {
-                        buf: e.to_line(),
-                        editing: Some(app.sel_entry),
-                    });
+                    app.input = Some(Input::new(&e.to_line(), Some(app.sel_entry)));
                     app.status = "编辑中：改完回车保存，Esc 取消".into();
                 }
             }
@@ -616,10 +716,7 @@ fn run(terminal: &mut DefaultTerminal, start_page: Page) -> io::Result<()> {
                 }
                 Page::Manage => {
                     if let Some(e) = app.entries.get(app.sel_entry) {
-                        app.input = Some(Input {
-                            buf: e.to_line(),
-                            editing: Some(app.sel_entry),
-                        });
+                        app.input = Some(Input::new(&e.to_line(), Some(app.sel_entry)));
                         app.status = "编辑中：改完回车保存，Esc 取消".into();
                     }
                 }
@@ -874,11 +971,23 @@ fn draw(f: &mut Frame, app: &mut App) {
             width: chunks[2].width,
             height: 1,
         };
+        let (before, at, after) = input.split_at_cursor();
+        let cursor = Span::styled(
+            match at {
+                Some(c) => c.to_string(),
+                None => " ".to_string(),
+            },
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::LightGreen)
+                .add_modifier(Modifier::BOLD),
+        );
         f.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("> ", Style::default().fg(Color::LightGreen)),
-                Span::raw(input.buf.clone()),
-                Span::styled("▏", Style::default().fg(Color::LightGreen)),
+                Span::raw(before),
+                cursor,
+                Span::raw(after),
             ])),
             area,
         );
@@ -931,5 +1040,69 @@ mod tests {
         let v = split_args(r#"pwsh.exe -NoLogo -Command "cd C:/proj""#);
         assert_eq!(v[0], "pwsh.exe");
         assert_eq!(v.len(), 4);
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn cursor_moves_and_inserts_at_position() {
+        let mut i = Input::new("abc", None);
+        i.left();
+        i.insert('X');
+        assert_eq!(i.text(), "abXc");
+        assert_eq!(i.pos, 3);
+    }
+
+    #[test]
+    fn backspace_and_delete() {
+        let mut i = Input::new("abc", None);
+        i.backspace();
+        assert_eq!(i.text(), "ab");
+        i.home();
+        i.delete();
+        assert_eq!(i.text(), "b");
+    }
+
+    #[test]
+    fn home_end_and_arrows_clamp() {
+        let mut i = Input::new("abc", None);
+        i.home();
+        assert_eq!(i.pos, 0);
+        i.left();
+        assert_eq!(i.pos, 0);
+        i.end();
+        assert_eq!(i.pos, 3);
+        i.right();
+        assert_eq!(i.pos, 3);
+    }
+
+    #[test]
+    fn delete_word_back() {
+        let mut i = Input::new("ssh 家里 = 1.2.3.4", None);
+        i.delete_word_back();
+        assert_eq!(i.text(), "ssh 家里 = ");
+    }
+
+    #[test]
+    fn utf8_cursor_is_char_based() {
+        let mut i = Input::new("中文", None);
+        i.left();
+        i.insert('X');
+        assert_eq!(i.text(), "中X文");
+        i.backspace();
+        assert_eq!(i.text(), "中文");
+    }
+
+    #[test]
+    fn split_at_cursor_shows_cursor_char() {
+        let mut i = Input::new("ab", None);
+        i.left();
+        let (before, at, after) = i.split_at_cursor();
+        assert_eq!(before, "a");
+        assert_eq!(at, Some('b'));
+        assert_eq!(after, "");
     }
 }
