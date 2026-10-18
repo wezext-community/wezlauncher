@@ -99,7 +99,7 @@ fn basename(p: &str) -> String {
 fn load_tabs() -> io::Result<Vec<TabInfo>> {
     let raw = cli(&["list", "--format", "json"])?;
     let json: serde_json::Value = serde_json::from_str(&raw)
-        .map_err(|e| io::Error::other(format!("解析 cli list 输出失败: {e}")))?;
+        .map_err(|e| io::Error::other(format!("failed to parse `wezterm cli list` output: {e}")))?;
     let Some(panes) = json.as_array() else {
         return Ok(Vec::new());
     };
@@ -212,12 +212,12 @@ fn load_entries() -> Vec<FileEntry> {
 
 fn save_entries(entries: &[FileEntry]) -> io::Result<()> {
     let mut body = String::from(
-        "# wezlauncher 的自定义条目\n\
-         # 每行： <类型> 名字 = 参数\n\
-         #   ssh 家里 = 192.168.1.10 -p 2222\n\
+        "# wezlauncher custom entries\n\
+         # format: <kind> <name> = <args>\n\
+         #   ssh home = 192.168.1.10 -p 2222\n\
          #   wsl root = -d Debian -u root --cd ~\n\
-         #   cmd 项目 = pwsh.exe -NoLogo -Command \"cd C:/proj\"\n\
-         # 不带类型前缀时按 ssh 处理\n",
+         #   cmd proj = pwsh.exe -NoLogo -Command \"cd C:/proj\"\n\
+         # lines without a kind prefix are treated as ssh\n",
     );
     for e in entries {
         body.push_str(&e.to_line());
@@ -306,10 +306,10 @@ fn new_items(entries: &[FileEntry]) -> Vec<NewItem> {
     };
 
     let mut items = vec![
-        mk("PowerShell 7 标签页", "Windows", &["--", "pwsh.exe", "-NoLogo"]),
-        mk("CMD 标签页", "Windows", &["--", "cmd.exe"]),
+        mk("PowerShell 7 tab", "Windows", &["--", "pwsh.exe", "-NoLogo"]),
+        mk("CMD tab", "Windows", &["--", "cmd.exe"]),
         mk(
-            "Git Bash 标签页",
+            "Git Bash tab",
             "Windows",
             &["--", "C:/Program Files/Git/bin/bash.exe", "-li"],
         ),
@@ -318,7 +318,7 @@ fn new_items(entries: &[FileEntry]) -> Vec<NewItem> {
     for distro in list_wsl() {
         items.push(NewItem {
             label: format!("WSL: {distro}"),
-            hint: "WSL 家目录".to_string(),
+            hint: "WSL home".to_string(),
             args: vec![
                 "--".into(),
                 "wsl.exe".into(),
@@ -356,8 +356,8 @@ fn new_items(entries: &[FileEntry]) -> Vec<NewItem> {
     }
 
     items.push(mk(
-        "新窗口（PowerShell）",
-        "独立窗口",
+        "New window (PowerShell)",
+        "separate window",
         &["--new-window", "--", "pwsh.exe", "-NoLogo"],
     ));
 
@@ -475,10 +475,10 @@ impl App {
     fn new(start_page: Page) -> Self {
         let (tabs, status) = match load_tabs() {
             Ok(t) => {
-                let s = format!("{} 个标签页（Esc 取消）", t.len());
+                let s = format!("{} tabs (Esc to quit)", t.len());
                 (t, s)
             }
-            Err(e) => (Vec::new(), format!("读取标签页失败: {e}")),
+            Err(e) => (Vec::new(), format!("failed to list tabs: {e}")),
         };
         let entries = load_entries();
         // 调试用：WEZLAUNCHER_INPUT="ssh a = b" 启动即进入输入模式
@@ -514,12 +514,12 @@ impl App {
         match load_tabs() {
             Ok(t) => {
                 self.tabs = t;
-                self.status = format!("已刷新：{} 个标签页，{} 个自定义条目", self.tabs.len(), self.entries.len());
+                self.status = format!("refreshed: {} tabs, {} custom entries", self.tabs.len(), self.entries.len());
                 if self.sel_tab >= self.tabs.len() {
                     self.sel_tab = self.tabs.len().saturating_sub(1);
                 }
             }
-            Err(e) => self.status = format!("刷新失败: {e}"),
+            Err(e) => self.status = format!("refresh failed: {e}"),
         }
         if self.sel_entry >= self.entries.len() {
             self.sel_entry = self.entries.len().saturating_sub(1);
@@ -530,20 +530,20 @@ impl App {
         let Some(input) = self.input.take() else { return };
         let text = input.text().trim().to_string();
         if text.is_empty() {
-            self.status = "取消：内容为空".into();
+            self.status = "cancelled: empty input".into();
             return;
         }
         let Some(entry) = parse_entry_line(&text) else {
-            self.status = "格式不对，应形如 `ssh 名字 = user@host -p 2222`".into();
+            self.status = "bad format, expected `ssh name = user@host -p 2222`".into();
             return;
         };
         match input.editing {
             Some(idx) if idx < self.entries.len() => {
-                self.status = format!("已修改：{}", entry.to_line());
+                self.status = format!("updated: {}", entry.to_line());
                 self.entries[idx] = entry;
             }
             _ => {
-                self.status = format!("已新增：{}", entry.to_line());
+                self.status = format!("added: {}", entry.to_line());
                 self.entries.push(entry);
                 self.sel_entry = self.entries.len().saturating_sub(1);
             }
@@ -556,7 +556,7 @@ impl App {
             return;
         }
         let removed = self.entries.remove(self.sel_entry);
-        self.status = format!("已删除：{}", removed.to_line());
+        self.status = format!("deleted: {}", removed.to_line());
         if self.sel_entry >= self.entries.len() {
             self.sel_entry = self.entries.len().saturating_sub(1);
         }
@@ -568,7 +568,7 @@ impl App {
             Ok(()) => {
                 self.new_items = new_items(&self.entries);
             }
-            Err(e) => self.status = format!("写入失败: {e}"),
+            Err(e) => self.status = format!("write failed: {e}"),
         }
     }
 }
@@ -619,7 +619,7 @@ fn run(terminal: &mut DefaultTerminal, start_page: Page) -> io::Result<()> {
                 KeyCode::Enter => app.commit_input(),
                 KeyCode::Esc => {
                     app.input = None;
-                    app.status = "已取消输入".into();
+                    app.status = "input cancelled".into();
                 }
                 KeyCode::Left => input.left(),
                 KeyCode::Right => input.right(),
@@ -651,9 +651,9 @@ fn run(terminal: &mut DefaultTerminal, start_page: Page) -> io::Result<()> {
                     Page::Manage => Page::Tabs,
                 };
                 app.status = match app.page {
-                    Page::Tabs => format!("{} 个标签页", app.tabs.len()),
-                    Page::New => format!("{} 个可启动项", app.new_items.len()),
-                    Page::Manage => format!("{} 个自定义条目（a 新增 / Enter 编辑 / d 删除）", app.entries.len()),
+                    Page::Tabs => format!("{} tabs", app.tabs.len()),
+                    Page::New => format!("{} launch items", app.new_items.len()),
+                    Page::Manage => format!("{} custom entries (a add / Enter edit / d delete)", app.entries.len()),
                 };
             }
             KeyCode::Char('r') => app.reload(),
@@ -681,7 +681,7 @@ fn run(terminal: &mut DefaultTerminal, start_page: Page) -> io::Result<()> {
             },
             KeyCode::Char('a') if app.page == Page::Manage => {
                 app.input = Some(Input::new("", None));
-                app.status = "新增：输入 `ssh 名字 = 参数` 后回车".into();
+                app.status = "new entry: type `ssh name = args` then Enter".into();
             }
             KeyCode::Char('d') if app.page == Page::Manage => {
                 if !app.entries.is_empty() {
@@ -691,7 +691,7 @@ fn run(terminal: &mut DefaultTerminal, start_page: Page) -> io::Result<()> {
             KeyCode::Char('e') if app.page == Page::Manage => {
                 if let Some(e) = app.entries.get(app.sel_entry) {
                     app.input = Some(Input::new(&e.to_line(), Some(app.sel_entry)));
-                    app.status = "编辑中：改完回车保存，Esc 取消".into();
+                    app.status = "editing: Enter saves, Esc cancels".into();
                 }
             }
             KeyCode::Enter => match app.page {
@@ -700,7 +700,7 @@ fn run(terminal: &mut DefaultTerminal, start_page: Page) -> io::Result<()> {
                         let id = tab.tab_id.to_string();
                         match cli(&["activate-tab", "--tab-id", &id]) {
                             Ok(_) => app.quit = true,
-                            Err(e) => app.status = format!("切换失败: {e}"),
+                            Err(e) => app.status = format!("switch failed: {e}"),
                         }
                     }
                 }
@@ -710,14 +710,14 @@ fn run(terminal: &mut DefaultTerminal, start_page: Page) -> io::Result<()> {
                         args.extend(item.args.iter().map(|s| s.as_str()));
                         match cli(&args) {
                             Ok(_) => app.quit = true,
-                            Err(e) => app.status = format!("新建失败: {e}"),
+                            Err(e) => app.status = format!("launch failed: {e}"),
                         }
                     }
                 }
                 Page::Manage => {
                     if let Some(e) = app.entries.get(app.sel_entry) {
                         app.input = Some(Input::new(&e.to_line(), Some(app.sel_entry)));
-                        app.status = "编辑中：改完回车保存，Esc 取消".into();
+                        app.status = "editing: Enter saves, Esc cancels".into();
                     }
                 }
             },
@@ -739,9 +739,9 @@ fn run(terminal: &mut DefaultTerminal, start_page: Page) -> io::Result<()> {
 
 fn page_badge(page: Page) -> Span<'static> {
     match page {
-        Page::Tabs => Span::styled(" 标签页 ", Style::default().fg(Color::Black).bg(Color::LightBlue)),
-        Page::New => Span::styled(" 新建 ", Style::default().fg(Color::Black).bg(Color::LightGreen)),
-        Page::Manage => Span::styled(" 管理 ", Style::default().fg(Color::Black).bg(Color::LightYellow)),
+        Page::Tabs => Span::styled(" Tabs ", Style::default().fg(Color::Black).bg(Color::LightBlue)),
+        Page::New => Span::styled(" New ", Style::default().fg(Color::Black).bg(Color::LightGreen)),
+        Page::Manage => Span::styled(" Manage ", Style::default().fg(Color::Black).bg(Color::LightYellow)),
     }
 }
 
@@ -801,7 +801,7 @@ fn draw(f: &mut Frame, app: &mut App) {
                     ];
                     if t.panes > 1 {
                         spans.push(Span::styled(
-                            format!("  [{} 分屏]", t.panes),
+                            format!("  [{} panes]", t.panes),
                             Style::default().fg(Color::DarkGray),
                         ));
                     }
@@ -812,7 +812,7 @@ fn draw(f: &mut Frame, app: &mut App) {
                 })
                 .collect();
             let list = List::new(items)
-                .block(Block::default().borders(Borders::ALL).title(" 标签页 "))
+                .block(Block::default().borders(Borders::ALL).title(" Tabs "))
                 .highlight_style(
                     Style::default()
                         .bg(Color::LightBlue)
@@ -837,17 +837,17 @@ fn draw(f: &mut Frame, app: &mut App) {
                 )));
                 lines.push(Line::from(""));
                 lines.push(Line::from(vec![
-                    Span::styled("窗口 ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("window ", Style::default().fg(Color::DarkGray)),
                     Span::raw(t.window_id.to_string()),
-                    Span::styled("   标签 ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("   tab ", Style::default().fg(Color::DarkGray)),
                     Span::raw(t.tab_id.to_string()),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("目录 ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("dir ", Style::default().fg(Color::DarkGray)),
                     Span::raw(basename(&t.cwd.replace("file:///", ""))),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("分屏 ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("panes ", Style::default().fg(Color::DarkGray)),
                     Span::raw(t.panes.to_string()),
                 ]));
                 lines.push(Line::from(""));
@@ -856,11 +856,11 @@ fn draw(f: &mut Frame, app: &mut App) {
                     Style::default().fg(Color::Gray),
                 )));
             } else {
-                lines.push(Line::from("(没有其它标签页，Tab 去新建一个)"));
+                lines.push(Line::from("(no other tabs - press Tab to create one)"));
             }
             f.render_widget(
                 Paragraph::new(lines)
-                    .block(Block::default().borders(Borders::ALL).title(" 详情 "))
+                    .block(Block::default().borders(Borders::ALL).title(" Details "))
                     .wrap(Wrap { trim: true }),
                 body[1],
             );
@@ -877,7 +877,7 @@ fn draw(f: &mut Frame, app: &mut App) {
                 })
                 .collect();
             let list = List::new(items)
-                .block(Block::default().borders(Borders::ALL).title(" 新建 "))
+                .block(Block::default().borders(Borders::ALL).title(" New "))
                 .highlight_style(
                     Style::default()
                         .bg(Color::LightGreen)
@@ -892,7 +892,7 @@ fn draw(f: &mut Frame, app: &mut App) {
         Page::Manage => {
             let items: Vec<ListItem> = if app.entries.is_empty() {
                 vec![ListItem::new(Line::from(Span::styled(
-                    " (还没有自定义条目，按 a 新增一条)",
+                    " (no custom entries yet, press a to add one)",
                     Style::default().fg(Color::DarkGray),
                 )))]
             } else {
@@ -919,7 +919,7 @@ fn draw(f: &mut Frame, app: &mut App) {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" 管理自定义条目（a 新增 / Enter 编辑 / d 删除） "),
+                        .title(" Manage entries (a add / Enter edit / d delete) "),
                 )
                 .highlight_style(
                     Style::default()
@@ -939,27 +939,27 @@ fn draw(f: &mut Frame, app: &mut App) {
     // 底部：帮助 + 输入行
     let help = if app.input.is_some() {
         Line::from(vec![
-            Span::styled(" 输入 ", Style::default().fg(Color::Black).bg(Color::LightYellow)),
-            Span::raw(" 形如 `ssh 名字 = user@host -p 2222`，Enter 保存，Esc 取消"),
+            Span::styled(" input ", Style::default().fg(Color::Black).bg(Color::LightYellow)),
+            Span::raw(" e.g. `ssh home = user@host -p 2222`; Enter saves, Esc cancels"),
         ])
     } else {
         Line::from(vec![
             Span::styled(" Tab ", Style::default().fg(Color::LightCyan)),
-            Span::raw("切页  "),
+            Span::raw("page  "),
             Span::styled("↑↓/jk ", Style::default().fg(Color::LightBlue)),
-            Span::raw("选择  "),
+            Span::raw("select  "),
             Span::styled("Enter ", Style::default().fg(Color::LightBlue)),
             Span::raw(match app.page {
-                Page::Tabs => "切换到该标签页  ",
-                Page::New => "打开  ",
-                Page::Manage => "编辑选中条目  ",
+                Page::Tabs => "switch to this tab  ",
+                Page::New => "launch  ",
+                Page::Manage => "edit entry  ",
             }),
             Span::styled("r ", Style::default().fg(Color::LightBlue)),
-            Span::raw("刷新  "),
+            Span::raw("refresh  "),
             Span::styled("Esc ", Style::default().fg(Color::LightBlue)),
-            Span::raw("取消  "),
+            Span::raw("cancel  "),
             Span::styled("q ", Style::default().fg(Color::LightBlue)),
-            Span::raw("退出"),
+            Span::raw("quit"),
         ])
     };
     f.render_widget(Paragraph::new(help), chunks[2]);
