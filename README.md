@@ -1,43 +1,57 @@
 # wezlauncher
 
-替代 wezterm 内置启动器的 TUI：**切标签页** + **开新 shell**。
+**English** | [中文](README.zh-CN.md)
 
-新 shell 列表自动包含：
+A launcher TUI for [WezTerm](https://wezterm.org) — a replacement for the built-in
+launcher, with two pages: **switch tabs** and **open a new shell**.
 
-- **所有已安装的 WSL 发行版**（运行时 `wsl.exe -l -q` 枚举，UTF-16LE 解码，过滤 docker-desktop）
-- **`~/.wezterm-ssh.txt` 里自定义的 SSH 条目**（首次运行自动生成模板）
-- 固定的 PowerShell / CMD / Git Bash / 新窗口
+The "new shell" list is built at runtime and automatically contains:
 
-## 用法
+* **every installed WSL distribution** (enumerated with `wsl.exe -l -q`, UTF-16LE
+  decoded, `docker-desktop*` filtered out),
+* **your own SSH entries** from `~/.wezterm-ssh.txt` (a template is created on first run),
+* the fixed PowerShell / CMD / Git Bash / new-window items.
+
+## Usage
 
 ```
-Ctrl+Shift+O   打开（wezterm 键位里配的是新开一个标签页跑本程序）
-Tab            切页：标签页 / 新建
-↑↓ / jk        选择
-Enter          切换标签页 / 打开新 shell
-r              刷新（重读标签页、WSL、SSH）
-Esc / q        退出（会把自己这个标签页关掉）
+Ctrl+Shift+O   open it (the WezTerm key binding spawns it in a new tab)
+Tab            switch page: tabs / new
+↑↓ or jk       move
+Enter          activate the tab / launch the shell
+r              refresh (tabs, WSL list, SSH entries)
+Esc or q       quit (it closes its own tab)
 ```
 
-也可以 `wezlauncher --page new` 直接打开「新建」页。
+`wezlauncher --page new` starts directly on the "new" page.
 
-## SSH 配置
+## SSH entries
 
-`C:\Users\<你>\.wezterm-ssh.txt`：
+`C:\Users\<you>\.wezterm-ssh.txt`:
 
 ```ini
-# 名字 = ssh 参数
-家里 = 192.168.1.10
-生产 = deploy@example.com -p 2222
-跳板 = -i C:/Users/10678/.ssh/id_ed25519 user@10.0.0.5
+# name = ssh arguments
+home   = 192.168.1.10
+prod   = deploy@example.com -p 2222
+jump   = -i C:/Users/you/.ssh/id_ed25519 user@10.0.0.5
 ```
 
-## 依赖
+Everything after `=` is passed to `ssh.exe` verbatim, so ports, keys, `-J`, `-L` … all work.
 
-`wezterm cli`（同版本 wezterm 自带）、`wsl.exe`（可选）、`ssh.exe`（可选）。
+## How it talks to WezTerm
 
-## 安装
+It uses `wezterm cli` (list tabs, activate a tab, spawn a tab, kill its own pane),
+so it must run inside a WezTerm pane.
+
+## Install
 
 ```bash
 wezext install wezlauncher
+```
+
+## Build
+
+```bash
+cargo build --release
+# -> target/release/wezlauncher.exe
 ```
